@@ -1,0 +1,105 @@
+---
+title: "Data 621 Assignment 2"
+author: "Bridget Boakye"
+date: "2024-03-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+
+# Load libraries 
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+```
+
+
+1. Download the classification output data set (attached in Blackboard to the assignment).
+
+```{r}
+
+data <- read_csv("https://raw.githubusercontent.com/breboa/Data621/main/classification-output-data.csv")
+
+head(data)
+```
+
+2. The data set has three key columns we will use:
+ class: the actual class for the observation
+ scored.class: the predicted class for the observation (based on a threshold of 0.5)
+ scored.probability: the predicted probability of success for the observation
+Use the table() function to get the raw confusion matrix for this scored dataset. Make sure you understand
+the output. In particular, do the rows represent the actual or predicted class? The columns?
+
+
+```{r}
+
+confusion_matrix <- table(Actual = data$class, Predicted = data$scored.class)
+print(confusion_matrix)
+
+```
+output:
+
+Rows: Represent the actual classes of the instances.
+Columns: Represent the predicted classes by the model.
+
+119 (True Negative): The number of instances correctly predicted as negative (class 0).
+5 (False Positive): The number of instances incorrectly predicted as positive (class 1), but they are actually negative (class 0).
+30 (False Negative): The number of instances incorrectly predicted as negative (class 0), but they are actually positive (class 1).
+27 (True Positive): The number of instances correctly predicted as positive (class 1)
+
+3. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified,
+and returns the accuracy of the predictions.
+
+&
+
+4. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified,
+and returns the classification error rate of the predictions.
+
+Verify that you get an accuracy and an error rate that sums to one
+
+```{r}
+
+calculate_metrics <- function(confusion_matrix) {
+  
+  TP <- confusion_matrix[2, 2] 
+  TN <- confusion_matrix[1, 1]
+  FP <- confusion_matrix[1, 2]
+  FN <- confusion_matrix[2, 1]
+  
+  # Calculate accuracy
+  accuracy <- (TP + TN) / sum(confusion_matrix)
+  
+  # Calculate classification error rate
+  error_rate <- 1 - accuracy
+  
+  return(list(accuracy = accuracy, error_rate = error_rate))
+}
+
+```
+
+
+```{r}
+
+metrics <- calculate_metrics(confusion_matrix)
+print(metrics)
+
+```
+
+```{r}
+
+print(metrics$accuracy + metrics$error_rate) 
+
+```
+
+Model correctly predicted the actual class labels for about 80.66% of the instances in the dataset.
+Model incorrectly predicted the actual class labels for about 19.34% of the instances in the dataset.
+
+The accuracy and error rate sum to 1. 
