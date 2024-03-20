@@ -1,0 +1,286 @@
+---
+title: "Data 621 Assignment 3"
+author: "Bridget Boakye"
+date: "2024-03-18"
+output: html_document
+---
+
+# Overview:
+
+In this homework assignment, you will explore, analyze and model a data set containing information on
+crime for various neighborhoods of a major city. Each record has a response variable indicating whether
+or not the crime rate is above the median crime rate (1) or not (0).
+
+Your objective is to build a binary logistic regression model on the training data set to predict whether
+the neighborhood will be at risk for high crime levels. You will provide classifications and probabilities
+for the evaluation data set using your binary logistic regression model. You can only use the variables
+given to you (or, variables that you derive from the variables provided). 
+
+
+## Loading libraries:
+
+```{r warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(GGally)
+library(ggplot2)
+library(readr)
+library(reshape2)
+library(purrr)
+library(tidyr)
+library(corrplot)
+library(MASS)
+library(caret)
+library(e1071)
+library(ROCR)
+library(pROC)
+
+```
+
+
+# 1. Data Exploration:
+
+In this first step, we're going to look closely at the training data set to understand it better before we start preparing or modeling. 
+
+## Loading Data:
+
+The datasets (training and evaluation) has been uploaded to a GitHub repository, from which it has been loaded into the markdown using the code chunk provided below. The rationale behind uploading it to GitHub is to maintain the reproducibility of the work.
+
+```{r Data Importation}
+
+set.seed(2024)
+
+crime_training <- read.csv("https://raw.githubusercontent.com/breboa/Data621/main/crime-training-data_modified.csv", header=TRUE, sep=",")
+crime_evaluation <- read.csv("https://raw.githubusercontent.com/breboa/Data621/main/crime-evaluation-data_modified.csv", header=TRUE, sep=",")
+```
+
+
+### Data Dimension
+
+```{r}
+
+head(crime_training)
+dim(crime_training)
+```
+
+The dataset contains 466 records, with the 12 predictors and 1 target variable with the following features:
+
+znn: proportion of residential land zoned for large lots (over 25000 square feet) (predictor variable)
+indus: proportion of non-retail business acres per suburb (predictor variable)
+chas: a dummy var. for whether the suburb borders the Charles River (1) or not (0) (predictor variable)
+nox: nitrogen oxides concentration (parts per 10 million) (predictor variable)
+rm: average number of rooms per dwelling (predictor variable)
+age: proportion of owner-occupied units built prior to 1940 (predictor variable)
+dis: weighted mean of distances to five Boston employment centers (predictor variable)
+rad: index of accessibility to radial highways (predictor variable)
+tax: full-value property-tax rate per $10,000 (predictor variable)
+ptratio: pupil-teacher ratio by town (predictor variable)
+lstat: lower status of the population (percent) (predictor variable)
+medv: median value of owner-occupied homes in $1000s (predictor variable)
+target: whether the crime rate is above the median crime rate (1) or not (0) (response variable)
+
+All the predictors are numerical and integer types. 
+
+### Descriptive Summary Statistics:
+
+```{r}
+
+summary(crime_training)
+```
+
+The summary confirms the following information about the predictors, which is also stated in their description: 
+- There are 4 variables that are proportions: znn, indus, age, and lstat
+- There is one dummary variables: chas
+- There are also no missing values.
+
+### Check distribution of all the variables:
+
+## Histograms
+
+```{r}
+data_long <- crime_training %>%
+  select_if(is.numeric) %>%  
+  gather(key = "Variable", value = "Value")  
+
+ggplot(data_long, aes(x = Value)) + 
+  geom_histogram(bins = 30, fill = "gray", color = "black") + 
+  facet_wrap(~ Variable, scales = "free") + 
+  theme_minimal() + 
+  labs(x = "value", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+With the exception of rm, none the predictors appear normal from the histogram. 
+
+```{r}
+
+skewness_values <- sapply(crime_training, function(x) {
+  if(is.numeric(x)) skewness(x, na.rm = FALSE)
+  else NA 
+})
+
+skewness_values <- skewness_values[!is.na(skewness_values)]
+
+print(skewness_values)
+```
+
+Skewness check confirms most variables except indus and rm are highly skewed. Variables with skewness greater than 1 may be good candidates for transformation. 
+
+## Boxplots of feature variables 
+
+```{r}
+
+ggplot(stack(crime_training), aes(x = ind, y = values)) +
+  geom_boxplot(color = "blue", fill = "blue", alpha = 0.3, 
+               outlier.colour = "red", outlier.fill = "red",
+               outlier.size = 3) + 
+  labs(title = "Boxplot of feature variables") + 
+  scale_y_log10()
+```
+
+
+Boxplots of the feature variables validate the skewness observed in the corresponding histograms. The spread and skewness of variables vary considerably, with some variables having a larger IQR (e.g., tax), suggesting greater variability, and some with a more symmetric distribution (e.g., rm).There seems to be several outliers for many of the variables as well, highlighted by the red dots.
+
+```{r}
+
+corrplot(cor(crime_training))
+```
+
+The corrplot shows that there are strong positive correlations between this target variable and certain predictors: NO (nox) levels, the age of dwellings (age), the accessibility to radial highways (rad), non-retail business acres per suburb (indus), and the property tax rate (tax). In contrast, the target variable has a strong negative correlation with the proximity to employment centers in the metropolitan area (dis), indicating that as the distance to these centers increases, the likelihood of the area having a higher crime rate also increases.
+
+In addition to the relationships with the target variable, the plot highlights significant correlations among some predictors themselves. Notably, the industrial proportion of the area (indus), NO levels (nox), the age of dwellings (age), and the distance to employment centers (dis) are interrelated. A particularly strong correlation is observed between the accessibility to highways (rad) and the property tax rate (tax), suggesting that areas with better highway access also tend to have higher property tax rates.
+
+These correlations suggest underlying patterns or factors that might influence crime rates, such as environmental pollution (NO levels), older housing infrastructure (age), and economic factors (tax rates and job accessibility), which will be useful for modelling, although worthwhile to note that correlation is not causation. 
+
+
+### Unique Values and Modes:
+
+The histogram also shows that several predictors, including indus, ptratio, rad, tax, and zn, have pronounced modes, that is, single overrepresented values. We examine value frequencies within in these variables to determine how to treat them. 
+
+
+```{r}
+
+print('Indus values with the highest frequency: ')
+sort(table(crime_training$indus), decreasing = TRUE)[1:10]
+
+print('Ptratio values with the highest frequency: ')
+sort(table(crime_training$ptratio), decreasing = TRUE)[1:10]
+
+print('Rad values with the highest frequency: ')
+sort(table(crime_training$rad), decreasing = TRUE)[1:10]
+
+print('Tax values with the highest frequency: ')
+sort(table(crime_training$tax), decreasing = TRUE)[1:10]
+
+print('Zn values with the highest frequency: ')
+sort(table(crime_training$zn), decreasing = TRUE)[1:10]
+
+```
+
+Rad only has 9 unique values. 
+
+For indus, rad and tax, the most common values appear 121 times. The fact that these most frequent values are shared across the three different variables at the same occurrence rate suggests that there may be a non-random pattern or relationship between them. We investigate using the code below: 
+
+```{r}
+
+crime_training %>% filter(indus == 18.1) %>% filter(ptratio == 20.2) %>% filter(tax == 666) %>% nrow() #confirms count of 121 rows sharing same value
+
+```
+
+
+Specifying the rows where the most common values occurs confirms there is an overlap. This likely represents a cluster, where observations may not be random and could have an underlying factor linking them together.
+
+```{r}
+
+print('Proportion of cluster above median crime rate: ')
+
+crime_training %>% filter(indus == 18.1) %>% filter(ptratio == 20.2) %>% filter(tax == 666) %>% summarize(median(target))
+
+100*round(121/nrow(crime_training),2) #proportion of all observations
+100*round(121/nrow(crime_training[crime_training$target == 1,]),2) #proportion of high crime neighborhoods
+```
+
+Moreover, every neighborhood within this group of rows (121 of them) has a crime rate that is above the median value for the dataset. This isn't just a cluster of similar values for indus, rad, and tax; it's also specifically a cluster that has implications for this data across neighborhoods. The cluster represents 26% of all observations and over half of the high crime neighborhoods.
+
+
+```{r}
+
+table((crime_training$rad[crime_training$target ==1]))
+```
+
+A frequency table of the variable rad where the target variable equals 1 reveals that the 229 neighborhoods identified as having high crime rates are unevenly distributed across the different index levels of the rad variable. This indicates that the presence of high crime does not occur uniformly across all values of radial highways. Moreover, the lowest categories of the rad index (specifically, values 1 and 2 that does not appear in the table), there are no neighborhoods classified as high crime. But the overall relationship between rad and high crime rates doesn't follow a simple linear trend as there is no increase or decrease in high crime neighborhoods. 
+
+This suggests a complex relationship between highway accessibility (radial highways) and neighborhood crime rates. The absence of high crime in neighborhoods with the least highway access could reflect the positive aspects of reduced traffic and greater community cohesion, while the uneven distribution of high crime across other rad values highlights the multifaceted impact of highways on urban areas. In neighborhoods with especially high access to highways (24) however, there is a clear jump in high crime (121). 
+
+
+
+# 2. Data Preparation:
+
+In our data preparation, we seek to address skewness within specific variables (zn, dis, and rad) to better fulfil the assumptions of normality for binary regression. 
+
+
+### Overdispersion in 'zn'
+
+From the table chart and histograms in part 1, it is clear 0 occurs very frequently in the predictor variable 'zn'. Count shows 0 occurs for 339 observations out of 466.
+
+```{r}
+
+count(crime_training,zn)
+
+```
+Count shows 0 occurs for 339 observations out of 466. This represents 72.75% of the observations, a higher number of 0s than expected, potentially leading to overdispersion. To address this, we convert zn variable into a binary variable (0 and 1) that indicates the presence or absence of zoning for large residential lots.
+
+```{r}
+
+crime_training$zn <- ifelse(crime_training$zn == 0, 0, 1) # 0 indicates that the neighborhood does not have residential land zoned for large lots and 1 indicates that it does
+
+count(crime_training, zn)
+```
+
+### Log transform highly skewed variables 
+
+We identified in part 1 that 4 variables (medv, rad, dis, and lstat) are highly skewed, with skewness greater than 1. chas as a categorical varibale will be treated as a factor. 
+
+```{r}
+
+
+crime_training_transf <- crime_training %>%
+  mutate(
+    medv = as.numeric(medv),
+    rad = as.numeric(rad),
+    dis = as.numeric(dis),
+    lstat = as.numeric(lstat)
+  ) %>%
+  mutate(
+    medv = if_else(is.numeric(medv) & !is.na(medv) & medv > 0, log(medv), NA_real_),
+    rad = if_else(is.numeric(rad) & !is.na(rad) & rad > 0, log(rad), NA_real_),
+    dis = if_else(is.numeric(dis) & !is.na(dis) & dis > 0, log(dis), NA_real_),
+    lstat = if_else(is.numeric(lstat) & !is.na(lstat) & lstat > 0, log(lstat), NA_real_)
+  )
+
+```
+
+```{r}
+
+skewness_values_transformed <- sapply(crime_training_transf, function(x) {
+  if(is.numeric(x)) skewness(x, na.rm = FALSE)
+  else NA 
+})
+
+skewness_values_trasnformed <- skewness_values_transformed[!is.na(skewness_values_transformed)]
+
+print(skewness_values_trasnformed)
+```
+Skewness function shows medv, dis, rad, and lstat all have skewness values below 1 after log transformation. 
+
+### Change categorical variables to factors 
+
+Finally, we change the two categorical varibales in the dataset, chas and target, to factors. This transformation is crucial for statistical modeling, as it ensures that these variables are treated appropriately in terms of degrees of freedom. 
+
+```{r}
+
+crime_training$chas = as.factor(crime_training_transf$chas)
+crime_training$target = as.factor(crime_training_transf$target)
+
+summary(crime_training)
+
+```
